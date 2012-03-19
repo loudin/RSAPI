@@ -53,19 +53,29 @@ For example, let's say you have a User object. Here are the representations:
     <tr>
        <td>
        Server (JSON)
-       - user_id
-       - name
-       - email
-       - avatar_sm
-       - friends
-       </td>
-       <td>
-       Core Data
-       - userID
-       - name
-       - email
-       - avatarSm
-       - friends
+			 </td>
+			 <td>
+			 Core Data
+			 </td>
+		</tr>
+		<tr>
+			<td>
+				<ul>
+					<li>user_id</li>
+       		<li>name</li>
+       		<li>email</li>
+       		<li>avatar_sm</li>
+       		<li>friends</li>
+				</ul>
+      </td>
+      <td>
+      	<ul>
+					<li>userID</li>
+					<li>name</li>
+					<li>email</li>
+					<li>avatarSm</li>
+       		<li>friends</li>
+			  </ul>
        </td>
     </tr>
 </table>
