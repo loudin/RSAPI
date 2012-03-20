@@ -48,6 +48,7 @@
                 withProductionBase:@"http://www.boundaboutwith.us"          //Pass your production baseURL
                 ];
   
+  [api setUseProduction:NO];
   //Setup your API paths
   //Note that you MUST include the beginning slash for your path. 
   [api setPath:@"/path/to/object" forClass:@"CoreDataObjectClass" requestType:RSHTTPRequestTypeGet];   //Set up get request for an object
@@ -83,6 +84,26 @@
   //That's all you need to know in order to get things running.
   
   /* End Initialization */
+  
+  
+  /* Example of How to Log Out of RSAPI */
+  // Most applications feature a way for the user to log out. RSAPI will help you with that by:
+  // - Deleting the user's apiToken and other token values
+  // - Deleting the Core Data store so that their information is protected.
+  // All you need to do is write the following code in your app delegate:
+  
+  [api logOut];
+  [__persistentStoreCoordinator release];
+  __persistentStoreCoordinator = nil;
+  [__managedObjectContext release];
+  __managedObjectContext = nil;
+  [api refreshPersistentStoreCoord:self.persistentStoreCoordinator andManagedObjectContext:self.managedObjectContext];
+  
+  //[api logOut] deletes the persistent store and all of the tokens you set
+  //The other code refreshes the persistent store coordinator and managed object context
+  //Finally, you must refresh the pointers to your persistent store coordinator and managed object context for the next user.
+  /* End example of how to log out */
+  
   return YES;
 }
 

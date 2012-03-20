@@ -79,13 +79,4 @@
   return nil;
 }
 
-/* For returning data dictionaries on post */
-+(NSDictionary*)encodePostedData:(NSData*)data withFilename:(NSString*)filename{
-  return [NSDictionary dictionaryWithObjectsAndKeys:data,@"value",[NSNumber numberWithBool:YES],@"isPostParam",filename,@"fileName",@"image/jpeg",@"fileType",nil];
-}
-
-+(NSDictionary*)encodeObject:(id)object{
-  return [NSDictionary dictionaryWithObjectsAndKeys:object,@"value",nil];
-}
-
 @end

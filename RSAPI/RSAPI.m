@@ -48,10 +48,19 @@ static RSAPI *api = nil;
     _context = moc;
     _persistentStoreCoordinator = psc;
     
-    //Fetch APIToken Variables
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-    NSString *apiToken = [defaults objectForKey:@"RSAPIToken"];
-    NSString *apiTokenName = [defaults objectForKey:@"RSAPITokenName"];
+    
+    //Check to see if the allTokensArray has been initialized
+    NSMutableArray *allTokensArr = [defaults objectForKey:kAllTokensKey];
+    if (!allTokensArr){
+      allTokensArr = [[NSMutableArray alloc] init];
+      [defaults setObject:allTokensArr forKey:kAllTokensKey];
+      [allTokensArr release];
+    }
+    
+    //Fetch APIToken Variables
+    NSString *apiToken = [defaults objectForKey:kRSAPITokenKey];
+    NSString *apiTokenName = [defaults objectForKey:kRSAPITokenNameKey];
     if (apiToken)   _apiToken = [[NSString alloc] initWithString:apiToken];
     if (apiTokenName) _apiTokenName = [[NSString alloc] initWithString:apiTokenName];
     
@@ -117,8 +126,8 @@ static RSAPI *api = nil;
 }
 - (void)dealloc{
   return;
-//  [NSException raise:@"Singleton released" format:@"Your RSAPI singleton instance was released. What did you do??"];
-//  [super dealloc];
+  //  [NSException raise:@"Singleton released" format:@"Your RSAPI singleton instance was released. What did you do??"];
+  //  [super dealloc];
 }
 - (id)autorelease {
   return self;
@@ -138,8 +147,8 @@ static RSAPI *api = nil;
   _apiTokenName = [[NSString alloc] initWithString:paramName];
   
   NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-  [defaults setObject:_apiToken forKey:@"RSAPIToken"];
-  [defaults setObject:_apiTokenName forKey:@"RSAPITokenName"];
+  [defaults setObject:_apiToken forKey:kRSAPITokenKey];
+  [defaults setObject:_apiTokenName forKey:kRSAPITokenNameKey];
   [defaults synchronize];
 }
 
@@ -151,6 +160,7 @@ static RSAPI *api = nil;
 - (void)setToken:(id)val forKey:(NSString*)key{
   NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
   [defaults setObject:val forKey:key];
+  [[defaults objectForKey:kAllTokensKey] addObject:key];    //Add to tokens key array
   [defaults synchronize];
 }
 
@@ -178,7 +188,7 @@ static RSAPI *api = nil;
     
     id tempVal = [params objectForKey:binding];
     id bindingVal = ([tempVal isKindOfClass:[NSDictionary class]] ? [tempVal objectForKey:@"value"] : tempVal);
-          
+    
     if (!bindingVal)  [NSException raise:@"Invalid URL binding" format:@"You are trying to bind: %@ but no request parameter by the name of %@ was set.",path,bindingVal];
     
     //Now bind the var to the URL
@@ -192,7 +202,7 @@ static RSAPI *api = nil;
   NSString *urlString = path;
   if (requestType == RSHTTPRequestTypeGet){
     if (_apiToken)  urlString = [NSString stringWithFormat:@"%@?%@=%@",urlString,_apiTokenName,_apiToken];
-    
+    else            urlString = [NSString stringWithFormat:@"%@?",urlString];
     if (params != nil){
       NSEnumerator *enumerator = [params keyEnumerator];
       NSString *key;
@@ -226,7 +236,7 @@ static RSAPI *api = nil;
 - (void)removeRequestForPath:(NSString*)path cancel:(BOOL)cancel{  
   AFURLConnectionOperation *existingRequest = [_requests objectForKey:path];
   if (!existingRequest)  return;
-
+  
   if (cancel){
     [existingRequest cancel];
   }
@@ -313,7 +323,7 @@ static RSAPI *api = nil;
   
   NSDictionary *curObjPropMap = [_pMap objectForKey:class]; //Object's property mapping
   NSDictionary *curObjRelMap = [_rMap objectForKey:class]; //Object's relationship mapping
-
+  
   //Match the values up
   NSEnumerator *enumerator = [jsonDict keyEnumerator];
   NSString *jsonKey;
@@ -490,7 +500,7 @@ static RSAPI *api = nil;
     NSArray *retClassObjs = [_context executeFetchRequest:fetchReq error:&error];
     for (NSManagedObject *manObj in retClassObjs){
       NSString *manObjId = [[manObj valueForKey:objcIdKey] isKindOfClass:[NSString class]] ? 
-                            [manObj valueForKey:objcIdKey] : [NSString stringWithFormat:@"%@",[manObj valueForKey:objcIdKey]];
+      [manObj valueForKey:objcIdKey] : [NSString stringWithFormat:@"%@",[manObj valueForKey:objcIdKey]];
       
       if ( ![mobmListing valueForKey:class]){
         [mobmListing setValue:[[[NSMutableDictionary alloc] init] autorelease] forKey:class];
@@ -513,7 +523,7 @@ static RSAPI *api = nil;
   NSError *error;
   
   for (NSString *class in dictListing){
-
+    
     NSDictionary *allObjsDict = [dictListing objectForKey:class];
     NSDictionary *allMobsDict = [mobmListing objectForKey:class];
     if (!allMobsDict){
@@ -527,7 +537,7 @@ static RSAPI *api = nil;
     NSEntityDescription *objEntity = [NSEntityDescription entityForName:class inManagedObjectContext:_context];
     NSAttributeDescription *attrDesc = (NSAttributeDescription*)[[objEntity attributesByName] objectForKey:objcIdKey];
     BOOL classHasNumericID = [[attrDesc attributeValueClassName] isEqualToString:@"NSNumber"] ? YES : NO;
-
+    
     NSArray *allObjsIDs = [[allObjsDict allKeys] sortedArrayUsingComparator:^NSComparisonResult(id obj1, id obj2) {
       if (classHasNumericID){
         NSNumber *id1 = [NSNumber numberWithInt:[obj1 intValue]];
@@ -580,6 +590,52 @@ static RSAPI *api = nil;
     }
   }
   //And finally, we've done all of the classes.
+}
+
+#pragma mark - Log Out Functionality
+// Wipes NSUserDefaults for your tokens, destroys all Core Data stores.
+// Meant to be used in conjunction with a user log out script so that users can easily log out of your app and not worry about
+// leaving personal data behind.
+
+-(void)logOut{
+  NSError *error = nil;
+  
+  if ([_persistentStoreCoordinator persistentStores] == nil)
+    return;
+  
+  // FIXME: dirty. If there are many stores...
+  NSPersistentStore *store = [[_persistentStoreCoordinator persistentStores] lastObject];
+  
+  if (![_persistentStoreCoordinator removePersistentStore:store error:&error]) {
+    NSLog(@"Unresolved error %@, %@", error, [error userInfo]);
+    abort();
+  }  
+  
+  // Delete file
+  if ([[NSFileManager defaultManager] fileExistsAtPath:store.URL.path]) {
+    if (![[NSFileManager defaultManager] removeItemAtPath:store.URL.path error:&error]) {
+      NSLog(@"Unresolved error %@, %@", error, [error userInfo]);
+      abort();
+    } 
+  }
+  
+  //We also need to remove the api key access across keychains
+  NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+  [defaults removeObjectForKey:kRSAPITokenKey];
+  [defaults removeObjectForKey:kRSAPITokenNameKey];
+  NSMutableArray *allOtherKeys = [defaults objectForKey:kAllTokensKey];
+  for (NSString *key in allOtherKeys){
+    [defaults removeObjectForKey:key];
+  }
+  [defaults removeObjectForKey:kAllTokensKey];
+  [defaults synchronize];
+}
+
+- (void)refreshPersistentStoreCoord:(NSPersistentStoreCoordinator*)coord andManagedObjectContext:(NSManagedObjectContext*)context{
+  NSLog(@"COORD: %@",coord);
+  NSLog(@"CONTEXT: %@",context);
+  _persistentStoreCoordinator = coord;
+  _context = context;
 }
 
 #pragma mark - Main API Calling Functionality
@@ -653,7 +709,7 @@ static RSAPI *api = nil;
     }];
     [postParams release];
   }
-
+  
   NSLog(@"STARTING REQUEST: %@",requestStringURL);
   //This is the massive request we are sending out
   AFJSONRequestOperation *jsonRequestOperation = [AFJSONRequestOperation JSONRequestOperationWithRequest:request success:^(NSURLRequest *request, NSHTTPURLResponse *response, id JSON) {
@@ -709,6 +765,7 @@ static RSAPI *api = nil;
       }    
     }
     else if (reqType == RSRequestTypeMany){
+      NSLog(@"HIT THIS GUY RIGHT HERE");
       for (NSString *requestClass in (NSDictionary*)JSON){
         id importDictOrArr = [(NSDictionary*)JSON objectForKey:requestClass];
         if ([importDictOrArr isKindOfClass:[NSDictionary class]]){
@@ -756,6 +813,19 @@ static RSAPI *api = nil;
 
 - (void)call:(NSString*)routeName params:(NSDictionary *)params withDelegate:(id<RSAPIDelegate>)theDelegate{
   [self call:routeName params:params withDelegate:theDelegate withDataFetcher:nil];
+}
+
+#pragma mark - Helpers
++(NSDictionary*)encodeObject:(id)object{
+  return [NSDictionary dictionaryWithObjectsAndKeys:object,@"value",nil];
+}
+
++(NSDictionary*)encodeObjectAsURLParam:(id)object{
+  return [NSDictionary dictionaryWithObjectsAndKeys:object,@"value",[NSNumber numberWithBool:YES],@"urlParam",nil];
+}
+
++(NSDictionary*)encodePostedData:(NSData *)data forFileType:(NSString*)fileType withFilename:(NSString *)filename{
+  return [NSDictionary dictionaryWithObjectsAndKeys:data,@"value",[NSNumber numberWithBool:YES],@"isPostParam",filename,@"fileName",fileType,@"fileType",nil];
 }
 
 @end

@@ -28,7 +28,4 @@
 +(NSString*)jsonIdKeyForClass:(NSString*)className;
 +(NSDictionary*)jsonPropertyMapForClass:(NSString*)className;
 
-+(NSDictionary*)encodePostedData:(NSData*)data withFilename:(NSString*)filename;
-+(NSDictionary*)encodeObject:(id)object;
-
 @end

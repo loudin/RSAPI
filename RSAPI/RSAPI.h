@@ -27,6 +27,10 @@
 #import "AFNetworking.h"
 #import "NSString+Matching.h"
 
+#define kAllTokensKey         @"RSAPIAllTokenStorage"
+#define kRSAPITokenKey        @"RSAPITokenKey"
+#define kRSAPITokenNameKey    @"RSAPITokenNameKey"
+
 typedef enum {
   RSRequestTypeObject,
   RSRequestTypeData,
@@ -46,7 +50,7 @@ typedef enum{
   NSString *_productionBase;    //Production URL
   BOOL _useProduction;          //Flag to usethe production URL
   NSString *_baseURL;           //Changes based on the flag.
-    
+  
   NSManagedObjectContext *_context;
   NSPersistentStoreCoordinator *_persistentStoreCoordinator;
   
@@ -55,10 +59,10 @@ typedef enum{
   NSMutableDictionary *_routes;
   NSMutableDictionary *_pMap;
   NSMutableDictionary *_rMap;
-
+  
   NSString *_apiToken;
   NSString *_apiTokenName;
-    
+  
   //Global Dict for processing core data calls
   NSMutableDictionary *_allClassesDict;
 }
@@ -73,10 +77,17 @@ typedef enum{
 - (void)setToken:(id)val forKey:(NSString*)key;
 - (id)tokenForKey:(NSString*)key;
 
+- (void)logOut;
+- (void)refreshPersistentStoreCoord:(NSPersistentStoreCoordinator*)coord andManagedObjectContext:(NSManagedObjectContext*)context;
+
 - (void)setPath:(NSString*)path forClass:(NSString*)theClass requestType:(RSHTTPRequestType)requestType;
 - (void)call:(NSString*)routeName params:(NSDictionary *)params withDelegate:(id<RSAPIDelegate>)theDelegate;
 - (void)call:(NSString*)routeName params:(NSDictionary *)params withDelegate:(id<RSAPIDelegate>)theDelegate withDataFetcher:(RSDataFetcher*)dataFetcher;
 - (void)cancelRequestForPath:(NSString*)path;
+
++(NSDictionary*)encodeObject:(id)object;
++(NSDictionary*)encodeObjectAsURLParam:(id)object;
++(NSDictionary*)encodePostedData:(NSData *)data forFileType:(NSString*)fileType withFilename:(NSString *)filename;
 @end
 
 @protocol RSAPIDelegate <NSObject>
