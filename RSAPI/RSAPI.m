@@ -69,7 +69,6 @@ static RSAPI *api = nil;
       NSString *entityName = [entityDesc name];
       NSArray *entityProps = [entityDesc properties];
       NSDictionary *entityRelations = [entityDesc relationshipsByName];
-      NSLog(@"FOR: %@",entityName);
       //Set all properties and match with json keys
       NSMutableDictionary *jsonToObjCDict = [[NSMutableDictionary alloc] initWithCapacity:[entityProps count]];
       for (NSAttributeDescription *attrDesc in entityProps){
@@ -77,7 +76,6 @@ static RSAPI *api = nil;
         if (!jsonProp)  jsonProp = [attrDesc name];
         
         [jsonToObjCDict setObject:[attrDesc name] forKey:jsonProp];
-        NSLog(@"SET OBJECT: %@ FOR KEY: %@",[attrDesc name],jsonProp);
       }
       [_pMap setObject:jsonToObjCDict forKey:entityName];
       [jsonToObjCDict release];
@@ -89,7 +87,6 @@ static RSAPI *api = nil;
         NSString *objCKey = [relDesc name];
         NSString *relClass = [[relDesc destinationEntity] name];
         [objCKeyToRelationshipClassDict setObject:relClass forKey:objCKey];
-        NSLog(@"SET RELATION: %@ FOR KEY: %@",relClass,objCKey);
       }
       [_rMap setObject:objCKeyToRelationshipClassDict forKey:entityName];
       [objCKeyToRelationshipClassDict release];
@@ -335,7 +332,6 @@ static RSAPI *api = nil;
       NSString *nextClass = [curObjRelMap objectForKey:curObjCKey];
       NSString *nextClassKey = [curObjPropMap objectForKey:jsonKey];
       
-      NSLog(@"NEXT CLASS: %@",nextClass);
       NSString *dictID = [self importDictionary:jsonProp forManagedObjectClass:nextClass];
       if (dictID != nil)
         [[objDict valueForKey:@"relations"] setValue:dictID forKey:nextClassKey];
@@ -346,7 +342,6 @@ static RSAPI *api = nil;
       
       NSMutableSet *subsetIDs = [[NSMutableSet alloc] init];
       for (NSDictionary *propDict in jsonProp){
-        NSLog(@"NEXT CLASS: %@",nextClass);
         NSString *dictId = [self importDictionary:propDict forManagedObjectClass:nextClass];
         if (dictId != nil)
           [subsetIDs addObject:dictId];
@@ -632,8 +627,6 @@ static RSAPI *api = nil;
 }
 
 - (void)refreshPersistentStoreCoord:(NSPersistentStoreCoordinator*)coord andManagedObjectContext:(NSManagedObjectContext*)context{
-  NSLog(@"COORD: %@",coord);
-  NSLog(@"CONTEXT: %@",context);
   _persistentStoreCoordinator = coord;
   _context = context;
 }
@@ -710,10 +703,8 @@ static RSAPI *api = nil;
     [postParams release];
   }
   
-  NSLog(@"STARTING REQUEST: %@",requestStringURL);
   //This is the massive request we are sending out
   AFJSONRequestOperation *jsonRequestOperation = [AFJSONRequestOperation JSONRequestOperationWithRequest:request success:^(NSURLRequest *request, NSHTTPURLResponse *response, id JSON) {
-    NSLog(@"REQUEST RETURNED");
     //Get the returned request, remove the delegate, the request object, and the loadingView
     [self removeRequestForPath:routeName cancel:NO];
     id<RSAPIDelegate> theDel = [self delegateForKey:routeName];
@@ -765,7 +756,6 @@ static RSAPI *api = nil;
       }    
     }
     else if (reqType == RSRequestTypeMany){
-      NSLog(@"HIT THIS GUY RIGHT HERE");
       for (NSString *requestClass in (NSDictionary*)JSON){
         id importDictOrArr = [(NSDictionary*)JSON objectForKey:requestClass];
         if ([importDictOrArr isKindOfClass:[NSDictionary class]]){
