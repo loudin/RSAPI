@@ -33,6 +33,8 @@ RSAPI supports iOS4.0 and above. In order to use Object Mapping, your project mu
 The Guide to Setting Up and Using RSAPI
 =================================
 
+**I recently presented RSAPI at the New York iOS Developers Meetup. I have included the slides in the repository, as they provide a detailed overview about how to use the library**
+
 RSAPI consists of three classes that do the work for you:
 
 - RSModelHelper: Scaffolding code for you to specify how your JSON models match up to your Core Data models.
