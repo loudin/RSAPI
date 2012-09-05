@@ -27,6 +27,7 @@
 @synthesize delegate;
 @synthesize sectionOffset;
 
+/* Create a DataFetcher with a given fetch request from core data */
 - (id)initWithFetchRequest:(NSFetchRequest*)fetchRequest inContext:(NSManagedObjectContext*)context withKeyPath:(NSString*)keyPath usingCache:(NSString*)cache inTableView:(UITableView*)tableView{
   self = [super init];
   if (self){
@@ -37,6 +38,7 @@
   return self;
 }
 
+/* Refresh your DataFetcher with a new predicate - this is used for filtering through UITableViews */
 - (void)refreshRequestWithPredicate:(NSPredicate*)predicate andSortDescriptors:(NSArray*)sortDescriptors{
   //Featured Tour Request  
   if ([_fetchedResults cacheName]){
@@ -59,6 +61,7 @@
   [super dealloc];
 }
 
+/* Manuall perform a fetch */
 - (void)performFetch{
   NSError *error;
   if (![_fetchedResults performFetch:&error]) {
@@ -67,6 +70,8 @@
   }
 }
 
+/* Manually perform an update of the data by releasing the old request and creating a new one. We add an appropriate animation of the table based
+ * on the number of new vs old rows that are being returned */
 - (void)performUpdate{
   NSMutableArray *oldObjectsBySection = [[NSMutableArray alloc] initWithCapacity:[[_fetchedResults sections] count]];
   for (id<NSFetchedResultsSectionInfo> sectInfo in [_fetchedResults sections]){
@@ -99,6 +104,7 @@
     numSects = [newObjectsBySection count];
   }
   
+  /* Go over the new versus old sections and add/delete appropriately */
   for (int s = 0; s < numSects; s++){
     NSArray *oldSection = [oldObjectsBySection objectAtIndex:s];
     NSArray *newSection = [newObjectsBySection objectAtIndex:s];
@@ -149,10 +155,12 @@
   }
 }
 
+/* Return the object at the given path */
 - (id)objectAtIndexPath:(NSIndexPath *)indexPath{
   return [_fetchedResults objectAtIndexPath:[NSIndexPath indexPathForRow:indexPath.row inSection:indexPath.section-sectionOffset]];
 }
 
+/* Return the number of sections in the table */
 - (NSArray*)sections{
   if (sectionOffset == 0)
     return [_fetchedResults sections];
@@ -170,6 +178,7 @@
   return retArr;
 }
 
+/* Various helper functions so that this class interfaces with the delegate methods of UITableView well */
 - (NSIndexSet*)sectionIndexSet{
   return [NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, [[self sections] count])];
 }

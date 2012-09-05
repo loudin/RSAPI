@@ -27,6 +27,7 @@
 
 static RSAPI *api = nil;
 
+/* This allows us to auto-discover the Core Data model beneath */
 - (id)initWithMOC:(NSManagedObjectContext*)moc PSC:(NSPersistentStoreCoordinator*)psc MOM:(NSManagedObjectModel*)mom dev:(NSString*)d prod:(NSString*)p{
   self = [super init];
   if (self){    
@@ -75,9 +76,9 @@ static RSAPI *api = nil;
         NSString *jsonProp = [[RSModelHelper jsonPropertyMapForClass:entityName] objectForKey:[attrDesc name]];
         if (!jsonProp)  jsonProp = [attrDesc name];
         
-        [jsonToObjCDict setObject:[attrDesc name] forKey:jsonProp];
+        [jsonToObjCDict setObject:[attrDesc name] forKey:jsonProp];   //Create the mapping dictionary. Obj. C is the object, JSON is the key.
       }
-      [_pMap setObject:jsonToObjCDict forKey:entityName];
+      [_pMap setObject:jsonToObjCDict forKey:entityName]; //Set the mapping dictionary to the entity name in Core Data.
       [jsonToObjCDict release];
       
       //Set all relationships matching with objCId
@@ -86,7 +87,7 @@ static RSAPI *api = nil;
         NSRelationshipDescription *relDesc = [entityRelations objectForKey:relKey];
         NSString *objCKey = [relDesc name];
         NSString *relClass = [[relDesc destinationEntity] name];
-        [objCKeyToRelationshipClassDict setObject:relClass forKey:objCKey];
+        [objCKeyToRelationshipClassDict setObject:relClass forKey:objCKey];    //Do the same thing, except the object is the relation and the key is the objective c class.
       }
       [_rMap setObject:objCKeyToRelationshipClassDict forKey:entityName];
       [objCKeyToRelationshipClassDict release];
@@ -123,19 +124,24 @@ static RSAPI *api = nil;
 }
 - (void)dealloc{
   return;
-  //  [NSException raise:@"Singleton released" format:@"Your RSAPI singleton instance was released. What did you do??"];
-  //  [super dealloc];
+  [NSException raise:@"Singleton released" format:@"Your RSAPI singleton instance was released. What did you do??"];
+  [super dealloc];
 }
 - (id)autorelease {
   return self;
 }
 
 #pragma mark - Relationship Setters
-/* Specify path with the appropriate Class and requestType */
+/* Specify path with the appropriate Class and requestType
+ * This path is the RESTful path for your objects. The Class is your Objective C class for the data. The RequestType is GET or POST
+ */
 - (void)setPath:(NSString*)path forClass:(NSString*)theClass requestType:(RSHTTPRequestType)requestType{
   [_routes setObject:[NSDictionary dictionaryWithObjectsAndKeys:path,@"path",theClass,@"class",[NSNumber numberWithInt:requestType],@"requestType",nil] forKey:path];
 }
 
+/* If your private API relies on a token system to identify your iPhone user, specify the token along with the parameter. For example,
+ * if you end all your request looks like: ?access_token=<user access token>, the parameter name is access_token
+ */
 - (void)setAPIToken:(NSString*)token named:(NSString*)paramName{
   if (token == nil || paramName == nil) return;
   if (_apiToken) [_apiToken release];
@@ -148,11 +154,11 @@ static RSAPI *api = nil;
   [defaults setObject:_apiTokenName forKey:kRSAPITokenNameKey];
   [defaults synchronize];
 }
-
 - (NSString*)apiToken{
   return _apiToken;
 }
 
+/* This is a helper function for any other variables you need to store, like tokens for other APIs */
 #pragma mark - Key Value Encoding for NSDefaults
 - (void)setToken:(id)val forKey:(NSString*)key{
   NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
@@ -160,76 +166,94 @@ static RSAPI *api = nil;
   [[defaults objectForKey:kAllTokensKey] addObject:key];    //Add to tokens key array
   [defaults synchronize];
 }
-
 - (id)tokenForKey:(NSString*)key{
   return [[NSUserDefaults standardUserDefaults] objectForKey:key];
 }
 
 #pragma mark - URL Builders
+/* This is the basic building block for making a request. You specify the route that you wish to query. You add as many parameters as you want
+ * in an NSDictionary. The code then looks for that route, determines if it's a GET or a POST, and binds the variables accordingly behind the
+ * scenes. Remember, if your route has a variable in the URL, such as :id, you just have to name your variable "id" in the dictionary
+ */
 - (NSString*)requestStringURLForRoute:(NSString *)routeName forParams:(NSDictionary*)params{
   NSString *path = [[_routes objectForKey:routeName] objectForKey:@"path"];
   
-  //If the path has a colon, we can bind a param to the path itself
-  NSRange pathIDRange = [path rangeOfString:@":"];
-  while (pathIDRange.length > 0){
-    NSString *rest = [path substringFromIndex:pathIDRange.location+1];
+    //If the path has a colon, we can bind a param to the path itself, (e.g. /users/:id/friends)
+  NSRange pathParamRange = [path rangeOfString:@":"];
+  while (pathParamRange.length > 0){   //If there is an instance of the :, set the index to pathParamRange and loop around.
+    NSString *rest = [path substringFromIndex:pathParamRange.location+1];   //Store the rest of the URL, from just after the : onwards.
     
-    NSRange bindingRange = [rest rangeOfString:@"/"];
-    NSString *binding;
-    if (bindingRange.length > 0){
-      binding = [rest substringToIndex:[rest rangeOfString:@"/"].location];
+    NSRange endOfParamRange = [rest rangeOfString:@"/"]; 
+    NSString *paramName;
+    if (endOfParamRange.length > 0){   //If there are other slashes in the URL, take the substring from just after the : to the next slash for the variable name
+      paramName = [rest substringToIndex:endOfParamRange.location];
+    }         
+    else{                           //Otherwise, we are at the end of the URL, so we just use the rest of the string for the variable name.
+      paramName = rest;
     }
-    else{
-      binding = rest;
-    }
     
-    id tempVal = [params objectForKey:binding];
-    id bindingVal = ([tempVal isKindOfClass:[NSDictionary class]] ? [tempVal objectForKey:@"value"] : tempVal);
-    
+    id testBindingVal = [params objectForKey:paramName]; //Test to see if there's a matching binding value int he params dictionary
+    id bindingVal = ([testBindingVal isKindOfClass:[NSDictionary class]] ? [testBindingVal objectForKey:@"value"] : testBindingVal);
+      //Raise exception if it doesn't exist.
     if (!bindingVal)  [NSException raise:@"Invalid URL binding" format:@"You are trying to bind: %@ but no request parameter by the name of %@ was set.",path,bindingVal];
     
     //Now bind the var to the URL
-    NSString *firstHalf = [path substringToIndex:pathIDRange.location];
-    NSString *secondHalf = [path substringFromIndex:pathIDRange.location+binding.length+1];
-    path = [NSString stringWithFormat:@"%@%@%@",firstHalf,bindingVal,secondHalf];
-    pathIDRange = [path rangeOfString:@":"];    //Repeat for future variables until all variables are gone
+    NSString *firstHalf = [path substringToIndex:pathParamRange.location];                        //First part of the URL
+    NSString *secondHalf = [path substringFromIndex:pathParamRange.location+paramName.length+1];  //Second part of the URL
+    path = [NSString stringWithFormat:@"%@%@%@",firstHalf,bindingVal,secondHalf];                 //Make new URL with parameter inserted.
+    pathParamRange = [path rangeOfString:@":"];                                  //Repeat for future variables until all variables are gone
   }
+    //Now the URL has all the parameters replaced by their proper variables.
   
   RSHTTPRequestType requestType = (RSHTTPRequestType)[[[_routes objectForKey:routeName] objectForKey:@"requestType"] intValue];
   NSString *urlString = path;
-  if (requestType == RSHTTPRequestTypeGet){
-    if (_apiToken)  urlString = [NSString stringWithFormat:@"%@?%@=%@",urlString,_apiTokenName,_apiToken];
-    else            urlString = [NSString stringWithFormat:@"%@?",urlString];
-    if (params != nil){
-      NSEnumerator *enumerator = [params keyEnumerator];
-      NSString *key;
-      while(key = (NSString*)[enumerator nextObject]){
-        id tempParamDict = [params objectForKey:key];
-        
-        id paramValue;
-        if ([tempParamDict isKindOfClass:[NSDictionary class]]){
-          if ([tempParamDict objectForKey:@"urlParam"])   continue;
-          paramValue = [tempParamDict objectForKey:@"value"];
-        } 
-        else{
-          paramValue = tempParamDict;
-        }
-        
-        urlString = [NSString stringWithFormat:@"%@&%@=%@",urlString,key,paramValue];
-      }      
-    }
+    //If it's a POST request, return the URL string because that's all we need.
+  if (requestType == RSHTTPRequestTypePost)
+    return urlString;
+  
+    //If we have a GET request, we need to do extra work and append the other parameters to the end of the URL
+    //First, the question mark and apiToken if necessary
+  if (_apiToken)  urlString = [NSString stringWithFormat:@"%@?%@=%@",urlString,_apiTokenName,_apiToken];
+  else            urlString = [NSString stringWithFormat:@"%@?",urlString];
+  if (params != nil){
+    NSEnumerator *enumerator = [params keyEnumerator];
+    NSString *key;
+      //Enumerate across all the rest of the keys in the parameter dictionary.
+    while(key = (NSString*)[enumerator nextObject]){
+      id tempParamDict = [params objectForKey:key];
+      
+      id paramValue;
+        //If the parameter is an NSDictionary, make sure that it's not a urlParameter. If it is not, assign its value to the parameter
+      if ([tempParamDict isKindOfClass:[NSDictionary class]]){
+        if ([tempParamDict objectForKey:@"urlParam"])   continue;
+        paramValue = [tempParamDict objectForKey:@"value"];
+      } 
+        //If the parameter is not an NSDictionary, we're good. Just assign it there
+      else{
+        paramValue = tempParamDict;
+      }
+
+        //Now append the parameter value to the URL
+      urlString = [NSString stringWithFormat:@"%@&%@=%@",urlString,key,paramValue];
+    }      
   }
   return urlString;
 }
 
 #pragma mark - Add/Remove/Cancel requests from management
+/* This suite of functions allows better management of requests so that you don't overkills the server. */
+/* addRequest searches to see if the request is still in progress. If it is, you can't add it - you just wait for the other one to finish
+ * normally.
+ */
 - (void)addRequest:(AFURLConnectionOperation*)request forPath:(NSString*)path{
   AFURLConnectionOperation *existingRequest = [_requests objectForKey:path];
   if (!existingRequest){
     [_requests setObject:request forKey:path];
   }
 }
-
+/* removeRequestForPath is a private helper function for removing requests when they are finished and canceled. Each is handled differently behind
+ * the scenes.
+ */
 - (void)removeRequestForPath:(NSString*)path cancel:(BOOL)cancel{  
   AFURLConnectionOperation *existingRequest = [_requests objectForKey:path];
   if (!existingRequest)  return;
@@ -239,7 +263,8 @@ static RSAPI *api = nil;
   }
   [_requests removeObjectForKey:path];
 }
-
+/* cancelRequestForPath allows you to cancel a request (useful if you have a request going and the user switches to another screen)
+ */
 - (void)cancelRequestForPath:(NSString*)path{
   for (NSString *activePath in [_delegates allKeys]){
     //Modify active path for URLs with question marks in them.
@@ -256,6 +281,9 @@ static RSAPI *api = nil;
 }
 
 #pragma mark - Delegate for Requests and LoadingViews for requests
+/* Because you can have multiple requests going on at the same time, you need to set your delegate for the request by a key. This helps you 
+ * manage multiple views better when you make queries
+ */
 //Get the delegate from the Dictionary
 - (id<RSAPIDelegate>)delegateForKey:(NSString*)key{
   id<RSAPIDelegate> theDel = (id<RSAPIDelegate>)[_delegates objectForKey:key];
@@ -264,7 +292,6 @@ static RSAPI *api = nil;
   if (!theDel || [theDel isKindOfClass:[NSNull class]])  return nil;
   return theDel;
 }
-
 - (void)setDelegate:(id<RSAPIDelegate>)del forKey:(NSString*)key{
   if (![_delegates objectForKey:key]){    
     if (del)  [_delegates setObject:del forKey:key];
@@ -272,12 +299,14 @@ static RSAPI *api = nil;
   }
 }
 
-// New function for getting the route dictionary 
+/* Private function that returns the class of the object related to the route you input 
+ */
 - (NSString*)getRequestClassForRoute:(NSString*)route{
   NSDictionary *retDict = [_routes objectForKey:route];
   if (retDict)
     return [retDict objectForKey:@"class"];
   
+    //Fallback function in case the route has some variables in it, making the key a miss on the hash. We use "matches" to match the regExp of the route to the paths in the _routes dictionary
   NSArray *routeKeys = [_routes allKeys];
   for (int i = 0; i < [routeKeys count]; i++){
     NSString *path = [routeKeys objectAtIndex:i];
@@ -288,10 +317,15 @@ static RSAPI *api = nil;
   return nil;
 }
 
+/* This is the main function that is responsible for importing the data we recieve from the server. It's a private function that is called right
+ * after the server returns a JSON dictionary from the server.
+ * The goal of this function is to import all of the data into a dictionary format. One dictionary per object that is imported. This dictionary 
+ * contains key-value pairs of the imported object's data. The function also establishes relationship IDs based on the imported data.
+ */
 - (id)importDictionary:(NSDictionary*)jsonDict forManagedObjectClass:(NSString*)class{  
-  NSMutableDictionary *dictListing = [_allClassesDict valueForKey:@"dicts"];
+  NSMutableDictionary *dictListing = [_allClassesDict valueForKey:@"dicts"];      //Has the dictionaries for all models we import. Each value of the dictionary is another dictionary containing the data mapped to a class key.
   
-  //Look to see if we have class objects already. If not, create the dictionary
+  //Look to see if we have class objects already. If not, lazily create the dictionary
   NSMutableDictionary *allObjsDict = [dictListing objectForKey:class];
   if (!allObjsDict){
     [dictListing setValue:[[[NSMutableDictionary alloc] init] autorelease] forKey:class];
@@ -304,7 +338,7 @@ static RSAPI *api = nil;
   
   BOOL jsonKeyIsString = [[jsonDict objectForKey:jsonIdKey] isKindOfClass:[NSString class]];
   NSString *jsonId = ( jsonKeyIsString ? [jsonDict objectForKey:jsonIdKey] : [[jsonDict objectForKey:jsonIdKey] stringValue]);
-  //Look to see if we have that particular object for that class. If not, create a new holding dictionary
+  //Look to see if we have that particular object in the allObjsDict for that class. If not, create a new holding dictionary for the imported objects
   NSMutableDictionary *objDict = [allObjsDict objectForKey:jsonId];
   if (!objDict){
     [allObjsDict setValue:[[[NSMutableDictionary alloc] init] autorelease] forKey:jsonId];
@@ -325,29 +359,34 @@ static RSAPI *api = nil;
   NSEnumerator *enumerator = [jsonDict keyEnumerator];
   NSString *jsonKey;
   while(jsonKey = (NSString*)[enumerator nextObject]){
-    id jsonProp = [jsonDict objectForKey:jsonKey];
+    id jsonValue = [jsonDict objectForKey:jsonKey];
     NSString *curObjCKey = [curObjPropMap objectForKey:jsonKey];
     
-    if ([jsonProp isKindOfClass:[NSDictionary class]]){
+      //If the json value of the imported data is a dictionary, it means we have another object to import!
+      //Recursively call the importDictionary function, but first find the matching class by looking at the value's key name.
+    if ([jsonValue isKindOfClass:[NSDictionary class]]){
       NSString *nextClass = [curObjRelMap objectForKey:curObjCKey];
       NSString *nextClassKey = [curObjPropMap objectForKey:jsonKey];
       
-      NSString *dictID = [self importDictionary:jsonProp forManagedObjectClass:nextClass];
+        //The import dictionary function returns the dictionary ID, we set it in the relations dictionary for later.
+      NSString *dictID = [self importDictionary:jsonValue forManagedObjectClass:nextClass];
       if (dictID != nil)
         [[objDict valueForKey:@"relations"] setValue:dictID forKey:nextClassKey];
     }
-    else if ([jsonProp isKindOfClass:[NSArray class]]){
+      //If the JSON value is an array, we do the same as above, but we do it for every object in the array.
+    else if ([jsonValue isKindOfClass:[NSArray class]]){
       NSString *nextClass = [curObjRelMap objectForKey:curObjCKey];
       NSString *nextClassKey = [curObjPropMap objectForKey:jsonKey];
       
       NSMutableSet *subsetIDs = [[NSMutableSet alloc] init];
-      for (NSDictionary *propDict in jsonProp){
+      for (NSDictionary *propDict in jsonValue){
         NSString *dictId = [self importDictionary:propDict forManagedObjectClass:nextClass];
         if (dictId != nil)
           [subsetIDs addObject:dictId];
       }
       //We have all the added properties right now.
       
+        //For this relation, we create a set of IDs or append to the existing set on the relations dictionary
       NSMutableSet *existSet = [[objDict valueForKey:@"relations"] valueForKey:nextClassKey];
       if(!existSet){
         [[objDict valueForKey:@"relations"] setValue:[[[NSMutableSet alloc] initWithSet:subsetIDs] autorelease] forKey:nextClassKey];
@@ -358,51 +397,57 @@ static RSAPI *api = nil;
       
       [subsetIDs release];
     }
+      //If we get down here, the json Value is not a relationship, so we need to import the model.
+      //This is the base case of the recursive function because eventually, the tree needs to end.
     else{
-      if (jsonProp == nil || [jsonProp isKindOfClass:[NSNull class]]) continue;
+      if (jsonValue == nil || [jsonValue isKindOfClass:[NSNull class]]) continue;
       
+        //We determine the key of the objective-c model using our relationship map.
       NSString *objCKey = [curObjPropMap objectForKey:jsonKey];
       if (objCKey != nil){ 
         //It's a regular property. We need to treat this particularly differently.
         NSEntityDescription *objEntity = [NSEntityDescription entityForName:class inManagedObjectContext:_context];
         NSAttributeDescription *attrDesc = (NSAttributeDescription*)[[objEntity attributesByName] objectForKey:objCKey];
         
+          //The following if statements are to normalize the data - converting strings to NSDates, strings to numbers, etc. based on the model we are importing.
         /* NSDate Setting with Strings */
-        if ([[attrDesc attributeValueClassName] isEqualToString:@"NSDate"] && [jsonProp isKindOfClass:[NSString class]]){
-          NSString *jsonString = (NSString*)jsonProp;
+        if ([[attrDesc attributeValueClassName] isEqualToString:@"NSDate"] && [jsonValue isKindOfClass:[NSString class]]){
+          NSString *jsonString = (NSString*)jsonValue;
           jsonString = [[jsonString substringToIndex:(jsonString.length-1)] stringByAppendingString:@"-0000"];
           NSDateFormatter *dateFormat = [[NSDateFormatter alloc] init];
           [dateFormat setDateFormat:@"yyyy-MM-dd'T'HH:mm:ssZ"];
-          jsonProp = [dateFormat dateFromString:jsonString];
+          jsonValue = [dateFormat dateFromString:jsonString];
           [dateFormat release];
         }
         else if ([[attrDesc attributeValueClassName] isEqualToString:@"NSNumber"]){
-          if ([jsonProp isKindOfClass:[NSString class]]){
-            NSString *jsonString = (NSString*)jsonProp;
+          if ([jsonValue isKindOfClass:[NSString class]]){
+            NSString *jsonString = (NSString*)jsonValue;
             NSNumber *jsonNumber = [NSNumber numberWithFloat:[jsonString floatValue]];
-            jsonProp = jsonNumber;
+            jsonValue = jsonNumber;
           }
           else if ([attrDesc attributeType] == NSBooleanAttributeType){
-            if (![jsonProp isKindOfClass:[NSNull class]] && [jsonProp intValue] == 1){
-              jsonProp = [NSNumber numberWithBool:YES];
+            if (![jsonValue isKindOfClass:[NSNull class]] && [jsonValue intValue] == 1){
+              jsonValue = [NSNumber numberWithBool:YES];
             }
             else{
-              jsonProp = [NSNumber numberWithBool:NO];
+              jsonValue = [NSNumber numberWithBool:NO];
             }
           }
         }
         /* If we have a NSNull class, we need to edit it to nil */
-        if ([jsonProp isKindOfClass:[NSNull class]]){
-          jsonProp = nil;
+        if ([jsonValue isKindOfClass:[NSNull class]]){
+          jsonValue = nil;
         }
-        [[objDict valueForKey:@"properties"] setValue:jsonProp forKey:objCKey]; 
+        [[objDict valueForKey:@"properties"] setValue:jsonValue forKey:objCKey]; 
         continue; 
       }
       
-      //If it's nil, we might have an ID on our hands
+      //If they key of the objective c model is nil, we might have an ID
+      //For instance, if we get a field group_id: 3, we need to match the "group" object with ID of three.
       //If our key length is <= 3 or it doesn't end with _id, continue
       if ([jsonKey length] <= 3 || ![[jsonKey substringFromIndex:[jsonKey length]-3] isEqualToString:@"_id"])   continue;
       
+        //If we are here, we verified we have an "_id" field, so make the appropriate relationship it exists on our map.
       NSString *relationKey = [jsonKey substringToIndex:[jsonKey length]-3];
       NSString *relClass = [curObjRelMap objectForKey:relationKey];
       if (!relClass)    continue;
@@ -410,15 +455,20 @@ static RSAPI *api = nil;
       //A relation exists and we can just store this thing as the ID 
       NSString *insertKey = [curObjPropMap objectForKey:relationKey];
       if (!insertKey) continue;
-      [[objDict valueForKey:@"relations"] setValue:jsonProp forKey:insertKey];
+      [[objDict valueForKey:@"relations"] setValue:jsonValue forKey:insertKey];
     }
   }
   
-  
+    //Down here, we are all done. Return the ID of the object we just imported.
   NSString *objcIdKey = [[_pMap objectForKey:class] objectForKey:jsonIdKey];
   return [[objDict valueForKey:@"properties"] objectForKey:objcIdKey];
 }
 
+/* This is the last step. For the next step, skip below to createManagedObjectDictionary */
+/* The managed object dictionary contains all of our managed objects with keys matching with their IDs. They also contain another dictionary
+ * that keeps track of all relationships. Its key is the relational object's ID and its value is the actual relation (a single managed object
+ * if there's just one relation. An NSSet if there's multiple
+ */
 - (void)setupManagedObjectRelations{
   NSMutableDictionary *dictListing = [_allClassesDict valueForKey:@"dicts"];
   NSMutableDictionary *mobmListing = [_allClassesDict valueForKey:@"mobms"];
@@ -456,6 +506,10 @@ static RSAPI *api = nil;
   }
 }
 
+/* This is the THIRD step of the process. What we do here is loop through the relationship dictionary and find all of the IDs associated with all
+ * of the relationships our model has. Then, we take these IDs to find the matching managed objects and create the appropriate data structure for
+ * the relation.
+ */
 - (void)insertRelationsIntoManagedObjectDictionary{
   NSMutableDictionary *dictListing = [_allClassesDict valueForKey:@"dicts"];
   NSMutableDictionary *mobmListing = [_allClassesDict valueForKey:@"mobms"];
@@ -483,13 +537,14 @@ static RSAPI *api = nil;
     }
   }
   
-  //All the relations are now in fetchDict
+  //All the relations we detected in the NSDcitionaries of imported data are now in fetchDict
   NSError *error;
   for (NSString *class in fetchDict){
     if (![fetchDict valueForKey:class] || ![[fetchDict valueForKey:class] isKindOfClass:[NSSet class]])   continue;
     NSString *jsonIdKey = [RSModelHelper jsonIdKeyForClass:class];
     NSString *objcIdKey = [[_pMap objectForKey:class] objectForKey:jsonIdKey];
     
+      //We look at all the IDs for the relations we have discovered and attach them to the appropriate managed Objects. This allows our object graph to be fully connected since Core Data requires two-way connections when importing data.
     NSFetchRequest *fetchReq = [[NSFetchRequest alloc] initWithEntityName:class];
     [fetchReq setPredicate:[NSPredicate predicateWithFormat:@"self.%@ IN %@",objcIdKey,[fetchDict valueForKey:class]]];
     NSArray *retClassObjs = [_context executeFetchRequest:fetchReq error:&error];
@@ -506,84 +561,90 @@ static RSAPI *api = nil;
     }
     [fetchReq release];
   }
-  //Now, we've inserted every relation into the mobmListing dictionary
+  //Now, we've inserted every relation into the mobmListing dictionary. So, when we go through the managed object models later, we have the relationships already created.
   [fetchDict release];
 }
 
+/* This is Step 2 of the import process. What we do here is take the dictionary values we just imported in the _allClassesDict variable and create
+ * managed objects that we insert into the core data database.
+ */
 - (void)createManagedObjectDictionary{
-  NSMutableDictionary *dictListing = [_allClassesDict valueForKey:@"dicts"];
-  NSMutableDictionary *mobmListing = [_allClassesDict valueForKey:@"mobms"];
-  
-  NSManagedObjectContext *importContext = _context;
-  NSError *error;
-  
-  for (NSString *class in dictListing){
+    //TODO: Optimize for multi-threading
+    NSMutableDictionary *dictListing = [_allClassesDict valueForKey:@"dicts"];
+    NSMutableDictionary *mobmListing = [_allClassesDict valueForKey:@"mobms"];
     
-    NSDictionary *allObjsDict = [dictListing objectForKey:class];
-    NSDictionary *allMobsDict = [mobmListing objectForKey:class];
-    if (!allMobsDict){
-      [mobmListing setValue:[[[NSMutableDictionary alloc] init] autorelease] forKey:class];
-      allMobsDict = [mobmListing valueForKey:class];
-    }
+    NSManagedObjectContext *importContext = _context;
+    NSError *error;
     
-    //Figure out what type of ID key we have NSString or NSNumber
-    NSString *jsonIdKey = [RSModelHelper jsonIdKeyForClass:class];
-    NSString *objcIdKey = [[_pMap objectForKey:class] objectForKey:jsonIdKey];
-    NSEntityDescription *objEntity = [NSEntityDescription entityForName:class inManagedObjectContext:_context];
-    NSAttributeDescription *attrDesc = (NSAttributeDescription*)[[objEntity attributesByName] objectForKey:objcIdKey];
-    BOOL classHasNumericID = [[attrDesc attributeValueClassName] isEqualToString:@"NSNumber"] ? YES : NO;
-    
-    NSArray *allObjsIDs = [[allObjsDict allKeys] sortedArrayUsingComparator:^NSComparisonResult(id obj1, id obj2) {
-      if (classHasNumericID){
-        NSNumber *id1 = [NSNumber numberWithInt:[obj1 intValue]];
-        NSNumber *id2 = [NSNumber numberWithInt:[obj2 intValue]];
-        return [id1 compare:id2];        
-      }
-      //Otherwise, it's a atring and return accordingly
-      return [(NSString*)obj1 compare:(NSString*)obj2];
-    }];
-    
-    NSFetchRequest *fetchRequest = [[NSFetchRequest alloc] initWithEntityName:class];
-    [fetchRequest setPredicate:[NSPredicate predicateWithFormat:@"self.%@ IN %@",objcIdKey,allObjsIDs]];
-    [fetchRequest setSortDescriptors:[NSArray arrayWithObject:[NSSortDescriptor sortDescriptorWithKey:objcIdKey ascending:YES]]];
-    NSArray *manObjs = [importContext executeFetchRequest:fetchRequest error:&error];
-    [fetchRequest release];
-    
-    //We always loop through all of the current objects. We increment m if there's no match.
-    int m = 0;
-    for (int a = 0; a < [allObjsDict count]; a++){
-      NSString *curObjID = [allObjsIDs objectAtIndex:a];
-      NSDictionary *curObj = [allObjsDict objectForKey:curObjID];
-      if (m == [manObjs count]){
-        //If we reached the end of our managed objects before the dictionary objects, we insert the rest
-        NSManagedObject *manObj = [NSEntityDescription insertNewObjectForEntityForName:class inManagedObjectContext:importContext];
-        [manObj setValuesForKeysWithDictionary:[curObj valueForKey:@"properties"]];
-        [allMobsDict setValue:manObj forKey:curObjID];
-        continue;
+    //We loop through all of the data for the class objects we imported in dictListing. We create matching Managed Object Models in the mobmListing dictionary.
+    for (NSString *class in dictListing){
+      NSDictionary *allObjsDict = [dictListing objectForKey:class];
+      NSDictionary *allMobsDict = [mobmListing objectForKey:class];
+      if (!allMobsDict){
+        [mobmListing setValue:[[[NSMutableDictionary alloc] init] autorelease] forKey:class];
+        allMobsDict = [mobmListing valueForKey:class];
       }
       
-      NSManagedObject *manObj = [manObjs objectAtIndex:m];
-      id manObjID = [manObj valueForKey:objcIdKey];
-      if ( (classHasNumericID && [manObjID intValue] != [curObjID intValue]) || (!classHasNumericID && ![manObjID isEqualToString:curObjID]) ){
-        //OR if the managed object id does not equal the current id, insert new and keep m where it is because we haven't found it yet.
-        manObj = [NSEntityDescription insertNewObjectForEntityForName:class inManagedObjectContext:importContext];
+        //Figure out what type of ID key we have NSString or NSNumber
+      NSString *jsonIdKey = [RSModelHelper jsonIdKeyForClass:class];
+      NSString *objcIdKey = [[_pMap objectForKey:class] objectForKey:jsonIdKey];
+      NSEntityDescription *objEntity = [NSEntityDescription entityForName:class inManagedObjectContext:_context];
+      NSAttributeDescription *attrDesc = (NSAttributeDescription*)[[objEntity attributesByName] objectForKey:objcIdKey];
+      BOOL classHasNumericID = [[attrDesc attributeValueClassName] isEqualToString:@"NSNumber"] ? YES : NO;
+      
+        //We need to order the IDs in ascending numerical order. This is why it's important ot know the data type: String or Number
+      NSArray *allObjsIDs = [[allObjsDict allKeys] sortedArrayUsingComparator:^NSComparisonResult(id obj1, id obj2) {
+        if (classHasNumericID){
+          NSNumber *id1 = [NSNumber numberWithInt:[obj1 intValue]];
+          NSNumber *id2 = [NSNumber numberWithInt:[obj2 intValue]];
+          return [id1 compare:id2];        
+        }
+          //Otherwise, it's a atring and return accordingly
+        return [(NSString*)obj1 compare:(NSString*)obj2];
+      }];
+      
+        //We create a fetch request to determine if we have ANY of the objects in the Core Data store already. This should execute ONCE per class for ALL of the objects assocaited with the class.
+      NSFetchRequest *fetchRequest = [[NSFetchRequest alloc] initWithEntityName:class];
+      [fetchRequest setPredicate:[NSPredicate predicateWithFormat:@"self.%@ IN %@",objcIdKey,allObjsIDs]];
+      [fetchRequest setSortDescriptors:[NSArray arrayWithObject:[NSSortDescriptor sortDescriptorWithKey:objcIdKey ascending:YES]]];
+      NSArray *manObjs = [importContext executeFetchRequest:fetchRequest error:&error];
+      [fetchRequest release];
+      
+        //We always loop through all of the current objects. We increment m if there's no match. We set the values accordingly.
+      int m = 0;
+      for (int a = 0; a < [allObjsDict count]; a++){
+        NSString *curObjID = [allObjsIDs objectAtIndex:a];
+        NSDictionary *curObj = [allObjsDict objectForKey:curObjID];
+        if (m == [manObjs count]){
+            //If we reached the end of our managed objects before the dictionary objects, we insert the rest
+          NSManagedObject *manObj = [NSEntityDescription insertNewObjectForEntityForName:class inManagedObjectContext:importContext];
+          [manObj setValuesForKeysWithDictionary:[curObj valueForKey:@"properties"]];
+          [allMobsDict setValue:manObj forKey:curObjID];
+          continue;
+        }
+        
+        NSManagedObject *manObj = [manObjs objectAtIndex:m];
+        id manObjID = [manObj valueForKey:objcIdKey];
+        if ( (classHasNumericID && [manObjID intValue] != [curObjID intValue]) || (!classHasNumericID && ![manObjID isEqualToString:curObjID]) ){
+            //OR if the managed object id does not equal the current id, insert new and keep m where it is because we haven't found it yet.
+          manObj = [NSEntityDescription insertNewObjectForEntityForName:class inManagedObjectContext:importContext];
+        }
+        else{
+            //We have a match. Increment m and set properties below.
+          m++;
+        }
+          //Add the manObj to the parent dictionary
+        [manObj setValuesForKeysWithDictionary:[curObj valueForKey:@"properties"]];
+        [allMobsDict setValue:manObj forKey:curObjID];
       }
-      else{
-        //We have a match. Increment m and set properties below.
-        m++;
+      
+        //Now, we've gone through ALL of the fetches for the class.
+        //Save the context, drain the pool, and re-init it.
+      if(![importContext save:&error]){
+        NSLog(@"ERROR: %@",[error description]);
+        exit(-1);
       }
-      //Add the manObj to the parent dictionary
-      [manObj setValuesForKeysWithDictionary:[curObj valueForKey:@"properties"]];
-      [allMobsDict setValue:manObj forKey:curObjID];
     }
-    
-    //Now, we've gone through ALL of the fetches for the class.
-    //Save the context, drawin the pool, and re-init it.
-    if(![importContext save:&error]){
-      NSLog(@"ERROR: %@",[error description]);
-      exit(-1);
-    }
-  }
   //And finally, we've done all of the classes.
 }
 
@@ -598,7 +659,7 @@ static RSAPI *api = nil;
   if ([_persistentStoreCoordinator persistentStores] == nil)
     return;
   
-  // FIXME: dirty. If there are many stores...
+  // TODO: This is dirty if there are many stores...
   NSPersistentStore *store = [[_persistentStoreCoordinator persistentStores] lastObject];
   
   if (![_persistentStoreCoordinator removePersistentStore:store error:&error]) {
@@ -632,6 +693,8 @@ static RSAPI *api = nil;
 }
 
 #pragma mark - Main API Calling Functionality
+/* This is the pbulic-facing API that is repsonsible for executing a request for a RESTful resource
+ */
 - (void)call:(NSString*)routeName params:(NSDictionary *)params withDelegate:(id<RSAPIDelegate>)theDelegate withDataFetcher:(RSDataFetcher *)dataFetcher{
   NSDictionary *route = (NSDictionary*)[_routes objectForKey:routeName];
   if (!route){
@@ -655,9 +718,11 @@ static RSAPI *api = nil;
   AFHTTPClient *httpClient = [[AFHTTPClient alloc] initWithBaseURL:[NSURL URLWithString:_baseURL]];
   NSMutableURLRequest *request;
   
+    //A GET request is vary simple. 
   if (requestType == RSHTTPRequestTypeGet){
     request = [httpClient requestWithMethod:@"GET" path:requestStringURL parameters:nil];
   }
+    //The POST request requires us to manually iterate over the parameters we're fed by the user.
   else if (requestType == RSHTTPRequestTypePost){
     NSMutableDictionary *postParams = [[NSMutableDictionary alloc] initWithCapacity:[params count]];
     NSMutableDictionary *postDataParams = [[NSMutableDictionary alloc] init];
@@ -703,7 +768,7 @@ static RSAPI *api = nil;
     [postParams release];
   }
   
-  //This is the massive request we are sending out
+  //This is the request we are sending out
   AFJSONRequestOperation *jsonRequestOperation = [AFJSONRequestOperation JSONRequestOperationWithRequest:request success:^(NSURLRequest *request, NSHTTPURLResponse *response, id JSON) {
     //Get the returned request, remove the delegate, the request object, and the loadingView
     [self removeRequestForPath:routeName cancel:NO];
@@ -732,7 +797,7 @@ static RSAPI *api = nil;
       }
       return;
     }
-    
+      //If we want to bypass the object relationship and just return DATA from the sever, this is our out
     if (reqType == RSRequestTypeData){
       if (theDel && [theDel respondsToSelector:@selector(apiDidReturn:forRoute:)]){
         [theDel apiDidReturn:JSON forRoute:routeName];
@@ -740,10 +805,12 @@ static RSAPI *api = nil;
       return;
     }
     
+      //Otherwise, it's time to process the data
     _allClassesDict = [[NSMutableDictionary alloc] initWithCapacity:2];
     [_allClassesDict setValue:[[[NSMutableDictionary alloc] init] autorelease] forKey:@"dicts"];
     [_allClassesDict setValue:[[[NSMutableDictionary alloc] init] autorelease] forKey:@"mobms"];
     
+      //First thing, if we just get a singular object back, we import for ONLY its object dictionary
     if (reqType == RSRequestTypeObject){
       NSString *requestClass = [self getRequestClassForRoute:routeName];               //Get object class for binding
       if ([JSON isKindOfClass:[NSDictionary class]]){
@@ -755,6 +822,7 @@ static RSAPI *api = nil;
         }
       }    
     }
+      //If it's MANY objects we get back, we import for every object in the array.
     else if (reqType == RSRequestTypeMany){
       for (NSString *requestClass in (NSDictionary*)JSON){
         id importDictOrArr = [(NSDictionary*)JSON objectForKey:requestClass];
@@ -768,11 +836,12 @@ static RSAPI *api = nil;
         }            
       }
     }
+      //Now, we have imported the objects and converted them into NSDictionaries
+    [self createManagedObjectDictionary];  //Convert the NSDictionaries into NSManagedObjects
+    [self insertRelationsIntoManagedObjectDictionary];  //Add the relationships between the various NSManagedObjects
+    [self setupManagedObjectRelations];    //We have all the Managed Objects, so officially set up the relationships.
     
-    [self createManagedObjectDictionary];  //Create Managed Object Dictionary that mirrors the data with just objects
-    [self insertRelationsIntoManagedObjectDictionary];
-    [self setupManagedObjectRelations];    //We have all of the dictionaries and managed objects. Set up relations.
-    
+      //Save our progress!
     NSError *error;
     if (![_context save:&error]) {   
       // Update to handle the error appropriately.
@@ -806,6 +875,8 @@ static RSAPI *api = nil;
 }
 
 #pragma mark - Helpers
+/* These are helpers for forming GET and POST requests
+ */
 +(NSDictionary*)encodeObject:(id)object{
   return [NSDictionary dictionaryWithObjectsAndKeys:object,@"value",nil];
 }
